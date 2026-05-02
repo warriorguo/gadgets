@@ -9,7 +9,7 @@
     .split {
       flex: 1;
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 2fr;
       min-height: 0;
     }
     .pane {
@@ -145,7 +145,7 @@
     }
 
     @media (max-width: 720px) {
-      .split { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+      .split { grid-template-columns: 1fr; grid-template-rows: 1fr 2fr; }
       .pane + .pane { border-left: none; border-top: 1px solid var(--border); }
     }
   </style>

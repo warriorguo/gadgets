@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gadgets · 小工具集</title>
+  <link rel="stylesheet" href="assets/common.css" />
+  <style>
+    .home {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 60px 24px;
+    }
+    .home h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+    }
+    .home .sub {
+      color: var(--text-dim);
+      margin-bottom: 32px;
+    }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .tool-card {
+      display: block;
+      padding: 18px 20px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .tool-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      text-decoration: none;
+    }
+    .tool-card .name {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .tool-card .desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <main class="home">
+    <h1>Gadgets</h1>
+    <div class="sub">小工具集合</div>
+    <div class="tool-grid">
+      <a class="tool-card" href="markdown/">
+        <div class="name">Markdown 渲染</div>
+        <div class="desc">拖拽或粘贴 Markdown，支持 Mermaid 图表与代码高亮。</div>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

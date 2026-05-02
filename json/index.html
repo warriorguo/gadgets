@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JSON 格式化 · Gadgets</title>
+  <link rel="stylesheet" href="../assets/common.css" />
+  <style>
+    .split {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 0;
+    }
+    .pane {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+    .pane + .pane { border-left: 1px solid var(--border); }
+    .pane-header {
+      padding: 6px 14px;
+      font-size: 12px;
+      color: var(--text-dim);
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .status-ok { color: var(--ok); text-transform: none; letter-spacing: 0; }
+    .status-err { color: var(--danger); text-transform: none; letter-spacing: 0; }
+
+    #input {
+      flex: 1;
+      width: 100%;
+      resize: none;
+      border: none;
+      outline: none;
+      padding: 16px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      tab-size: 2;
+    }
+    #tree {
+      flex: 1;
+      overflow: auto;
+      padding: 14px 18px;
+      background: var(--bg);
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .tree-error {
+      background: rgba(247, 118, 142, 0.08);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      padding: 10px 14px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+    .tree-empty {
+      color: var(--text-dim);
+      font-style: italic;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .node { display: block; }
+    .node-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 4px;
+    }
+    .toggle {
+      display: inline-block;
+      width: 14px;
+      flex: none;
+      cursor: pointer;
+      color: var(--text-dim);
+      user-select: none;
+      text-align: center;
+      transition: transform 0.1s;
+    }
+    .toggle.placeholder { cursor: default; }
+    .toggle:hover { color: var(--accent); }
+    .node.collapsed > .node-row > .toggle {
+      transform: rotate(-90deg);
+    }
+
+    .key { color: var(--accent); }
+    .punct { color: var(--text-dim); }
+    .summary {
+      color: var(--text-dim);
+      font-style: italic;
+      cursor: pointer;
+    }
+    .summary:hover { color: var(--accent); }
+
+    .v-string  { color: #9ece6a; }
+    .v-number  { color: #ff9e64; }
+    .v-boolean { color: #bb9af7; }
+    .v-null    { color: #f7768e; font-style: italic; }
+
+    .children {
+      margin-left: 18px;
+      border-left: 1px solid var(--border);
+      padding-left: 6px;
+    }
+    .node.collapsed > .children { display: none; }
+    .node.collapsed > .node-row > .close-after { display: inline; }
+    .node:not(.collapsed) > .node-row > .close-after { display: none; }
+    .close-line {
+      margin-left: 18px;
+      color: var(--text-dim);
+    }
+    .node.collapsed > .close-line { display: none; }
+
+    .toolbar {
+      display: flex;
+      gap: 6px;
+    }
+    .toolbar .mini-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .toolbar .mini-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    @media (max-width: 720px) {
+      .split { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+      .pane + .pane { border-left: none; border-top: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>JSON 格式化</h1>
+      <div class="actions">
+        <input type="file" id="file-input" accept=".json,application/json,text/plain" hidden />
+        <button id="open-btn">打开文件</button>
+        <button id="format-btn" title="将输入框中的 JSON 美化缩进">美化输入</button>
+        <button id="minify-btn" title="将输入框中的 JSON 压缩为单行">压缩输入</button>
+        <button id="clear-btn">清空</button>
+        <a class="home-link" href="../">← Gadgets</a>
+      </div>
+    </header>
+    <div class="split">
+      <div class="pane">
+        <div class="pane-header">
+          <span>输入（JSON）</span>
+          <span id="status"></span>
+        </div>
+        <textarea id="input" spellcheck="false" placeholder='在此粘贴 JSON，或将 .json 文件拖入页面...'></textarea>
+      </div>
+      <div class="pane">
+        <div class="pane-header">
+          <span>树形视图</span>
+          <div class="toolbar">
+            <button class="mini-btn" id="expand-all-btn">全部展开</button>
+            <button class="mini-btn" id="collapse-all-btn">全部折叠</button>
+          </div>
+        </div>
+        <div id="tree"></div>
+      </div>
+    </div>
+  </div>
+  <div class="drop-overlay" id="drop-overlay">松开以加载 JSON 文件</div>
+
+  <script>
+    "use strict";
+
+    const input = document.getElementById("input");
+    const tree = document.getElementById("tree");
+    const status = document.getElementById("status");
+    const fileInput = document.getElementById("file-input");
+    const openBtn = document.getElementById("open-btn");
+    const formatBtn = document.getElementById("format-btn");
+    const minifyBtn = document.getElementById("minify-btn");
+    const clearBtn = document.getElementById("clear-btn");
+    const expandAllBtn = document.getElementById("expand-all-btn");
+    const collapseAllBtn = document.getElementById("collapse-all-btn");
+    const dropOverlay = document.getElementById("drop-overlay");
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    // Convert a string offset (as reported by JSON.parse errors) into 1-based line/column.
+    function offsetToLineCol(text, offset) {
+      const upto = text.slice(0, Math.max(0, Math.min(offset, text.length)));
+      const lines = upto.split("\n");
+      return { line: lines.length, col: lines[lines.length - 1].length + 1 };
+    }
+
+    function parseError(text, err) {
+      const msg = err?.message || String(err);
+      // V8: "Unexpected token } in JSON at position 42 (line 3 column 5)"
+      // Safari: "JSON Parse error: Unexpected identifier" (no position)
+      const posMatch = msg.match(/position\s+(\d+)/i);
+      const lineColMatch = msg.match(/line\s+(\d+)\s+column\s+(\d+)/i);
+      let line, col;
+      if (lineColMatch) {
+        line = parseInt(lineColMatch[1], 10);
+        col = parseInt(lineColMatch[2], 10);
+      } else if (posMatch) {
+        const lc = offsetToLineCol(text, parseInt(posMatch[1], 10));
+        line = lc.line; col = lc.col;
+      }
+      return { msg, line, col };
+    }
+
+    function typeOf(v) {
+      if (v === null) return "null";
+      if (Array.isArray(v)) return "array";
+      return typeof v;
+    }
+
+    function renderPrimitive(v) {
+      const t = typeOf(v);
+      if (t === "string")  return `<span class="v-string">"${escapeHtml(v)}"</span>`;
+      if (t === "number")  return `<span class="v-number">${escapeHtml(v)}</span>`;
+      if (t === "boolean") return `<span class="v-boolean">${v}</span>`;
+      if (t === "null")    return `<span class="v-null">null</span>`;
+      return escapeHtml(String(v));
+    }
+
+    // Build a DOM node for one JSON value. `keyHtml` is already-escaped HTML for the leading key (or index), or empty.
+    // `trailingComma` adds a "," after the value/closing brace.
+    function buildNode(value, keyHtml, trailingComma) {
+      const t = typeOf(value);
+      const node = document.createElement("div");
+      node.className = "node";
+
+      if (t === "object" || t === "array") {
+        const isArr = t === "array";
+        const open = isArr ? "[" : "{";
+        const close = isArr ? "]" : "}";
+        const keys = isArr ? null : Object.keys(value);
+        const count = isArr ? value.length : keys.length;
+
+        const row = document.createElement("div");
+        row.className = "node-row";
+        row.innerHTML =
+          `<span class="toggle">▾</span>` +
+          (keyHtml ? `${keyHtml}<span class="punct">: </span>` : "") +
+          `<span class="punct">${open}</span>` +
+          (count === 0
+            ? `<span class="punct">${close}</span>`
+            : `<span class="summary" title="点击展开/折叠"> ${count} ${isArr ? "项" : "键"} </span>` +
+              `<span class="close-after punct">${close}</span>`) +
+          (trailingComma ? `<span class="punct">,</span>` : "");
+        node.appendChild(row);
+
+        if (count > 0) {
+          const children = document.createElement("div");
+          children.className = "children";
+          if (isArr) {
+            value.forEach((item, i) => {
+              const itemKey = `<span class="punct">${i}</span>`;
+              children.appendChild(buildNode(item, itemKey, i < count - 1));
+            });
+          } else {
+            keys.forEach((k, i) => {
+              const itemKey = `<span class="key">"${escapeHtml(k)}"</span>`;
+              children.appendChild(buildNode(value[k], itemKey, i < count - 1));
+            });
+          }
+          node.appendChild(children);
+
+          const closeLine = document.createElement("div");
+          closeLine.className = "close-line";
+          closeLine.innerHTML =
+            `<span class="punct">${close}</span>` +
+            (trailingComma ? `<span class="punct">,</span>` : "");
+          node.appendChild(closeLine);
+        }
+
+        const toggle = row.querySelector(".toggle");
+        const summary = row.querySelector(".summary");
+        const onToggle = (e) => {
+          e.stopPropagation();
+          node.classList.toggle("collapsed");
+        };
+        toggle.addEventListener("click", onToggle);
+        if (summary) summary.addEventListener("click", onToggle);
+      } else {
+        const row = document.createElement("div");
+        row.className = "node-row";
+        row.innerHTML =
+          `<span class="toggle placeholder"> </span>` +
+          (keyHtml ? `${keyHtml}<span class="punct">: </span>` : "") +
+          renderPrimitive(value) +
+          (trailingComma ? `<span class="punct">,</span>` : "");
+        node.appendChild(row);
+      }
+
+      return node;
+    }
+
+    function setStatus(html, ok) {
+      status.innerHTML = html;
+      status.className = ok ? "status-ok" : "status-err";
+    }
+
+    function render() {
+      const text = input.value;
+      if (!text.trim()) {
+        tree.innerHTML = `<div class="tree-empty">输入 JSON 后将在此显示...</div>`;
+        status.innerHTML = "";
+        status.className = "";
+        return;
+      }
+      let value;
+      try {
+        value = JSON.parse(text);
+      } catch (err) {
+        const { msg, line, col } = parseError(text, err);
+        const where = (line && col) ? ` (行 ${line}, 列 ${col})` : "";
+        setStatus(`✕ 解析失败${where}`, false);
+        tree.innerHTML = `<div class="tree-error">${escapeHtml(msg)}${where ? "\n" + where.trim() : ""}</div>`;
+        return;
+      }
+      setStatus("✓ 有效 JSON", true);
+      tree.innerHTML = "";
+      tree.appendChild(buildNode(value, "", false));
+    }
+
+    let renderTimer = null;
+    input.addEventListener("input", () => {
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(render, 100);
+    });
+
+    openBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const f = fileInput.files?.[0];
+      if (!f) return;
+      input.value = await f.text();
+      fileInput.value = "";
+      render();
+    });
+
+    formatBtn.addEventListener("click", () => {
+      try {
+        input.value = JSON.stringify(JSON.parse(input.value), null, 2);
+        render();
+      } catch { render(); }
+    });
+    minifyBtn.addEventListener("click", () => {
+      try {
+        input.value = JSON.stringify(JSON.parse(input.value));
+        render();
+      } catch { render(); }
+    });
+
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      render();
+    });
+
+    function setAllCollapsed(collapsed) {
+      tree.querySelectorAll(".node").forEach((n) => {
+        // Only nodes that have children (object/array) carry a non-placeholder toggle.
+        const t = n.querySelector(":scope > .node-row > .toggle");
+        if (!t || t.classList.contains("placeholder")) return;
+        n.classList.toggle("collapsed", collapsed);
+      });
+    }
+    expandAllBtn.addEventListener("click", () => setAllCollapsed(false));
+    collapseAllBtn.addEventListener("click", () => setAllCollapsed(true));
+
+    // Drag & drop file anywhere on the page.
+    let dragDepth = 0;
+    window.addEventListener("dragenter", (e) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      e.preventDefault();
+      dragDepth++;
+      dropOverlay.classList.add("active");
+    });
+    window.addEventListener("dragover", (e) => {
+      if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+    });
+    window.addEventListener("dragleave", (e) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) dropOverlay.classList.remove("active");
+    });
+    window.addEventListener("drop", async (e) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      dragDepth = 0;
+      dropOverlay.classList.remove("active");
+      const f = e.dataTransfer.files[0];
+      input.value = await f.text();
+      render();
+    });
+
+    // Initial demo content.
+    input.value = JSON.stringify({
+      project: "gadgets",
+      version: "0.1.0",
+      tools: [
+        { name: "markdown", status: "done", features: ["mermaid", "highlight"] },
+        { name: "json", status: "done", features: ["tree", "fold", "drag-drop"] }
+      ],
+      meta: {
+        owner: "andrew",
+        active: true,
+        tags: null,
+        counts: { tools: 2, planned: 0 }
+      }
+    }, null, 2);
+    render();
+  </script>
+</body>
+</html>

@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>代码片段 · Gadgets</title>
+  <link rel="stylesheet" href="../assets/common.css" />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/tokyo-night-dark.min.css"
+  />
+  <style>
+    /* ----- editor shell ----- */
+    .editor-wrap {
+      flex: 1;
+      position: relative;
+      overflow: auto;
+      background: var(--bg);
+    }
+
+    /* Shared typography between the highlight layer and the input layer.
+       These must match EXACTLY or the caret will drift away from the
+       characters it is supposedly between. */
+    .hl-layer,
+    .input-layer {
+      margin: 0;
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      tab-size: 4;
+      letter-spacing: 0;
+      white-space: pre;
+      word-spacing: 0;
+      padding: 16px 16px 16px 5em;   /* 5em left makes room for the line-no gutter */
+      border: 0;
+    }
+
+    .hl-layer {
+      position: relative;
+      min-height: 100%;
+      pointer-events: none;          /* clicks fall through to the textarea */
+      counter-reset: linecount;
+      background: transparent;
+    }
+    .hl-layer code.hljs {
+      display: block;
+      background: transparent;
+      padding: 0;
+    }
+    .hl-layer .ln {
+      counter-increment: linecount;
+      display: block;
+      min-height: 1.6em;             /* keep empty lines tall enough to land on */
+      position: relative;
+    }
+    .hl-layer .ln::before {
+      content: counter(linecount);
+      position: absolute;
+      left: -4em;
+      width: 3em;
+      text-align: right;
+      color: var(--text-dim);
+      opacity: 0.5;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .input-layer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      color: transparent;
+      caret-color: var(--text);
+      resize: none;
+      outline: none;
+      overflow: hidden;              /* parent .editor-wrap handles scroll */
+      -webkit-text-fill-color: transparent;
+    }
+    .input-layer::selection {
+      background: rgba(122, 162, 247, 0.35);
+    }
+
+    /* ----- status bar (replaces the old per-pane meta) ----- */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 14px;
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .status-bar .lang-name {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .status-bar .lang-source { opacity: 0.7; margin-left: 4px; }
+    .status-bar .right { font-variant-numeric: tabular-nums; }
+
+    select.lang-select {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 5px 10px;
+      font-size: 13px;
+      border-radius: 6px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    select.lang-select:hover { border-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>代码片段</h1>
+      <div class="actions">
+        <select id="lang-select" class="lang-select" title="语言（auto = 自动识别）">
+          <option value="auto">语言: 自动识别</option>
+          <option value="csharp">C#</option>
+          <option value="go">Go</option>
+          <option value="python3">Python 3</option>
+          <option value="python2">Python 2</option>
+          <option value="javascript">JavaScript</option>
+          <option value="typescript">TypeScript</option>
+          <option value="java">Java</option>
+          <option value="kotlin">Kotlin</option>
+          <option value="swift">Swift</option>
+          <option value="rust">Rust</option>
+          <option value="cpp">C++</option>
+          <option value="c">C</option>
+          <option value="ruby">Ruby</option>
+          <option value="php">PHP</option>
+          <option value="bash">Bash</option>
+          <option value="sql">SQL</option>
+          <option value="json">JSON</option>
+          <option value="yaml">YAML</option>
+          <option value="xml">HTML / XML</option>
+          <option value="css">CSS</option>
+          <option value="markdown">Markdown</option>
+          <option value="plaintext">Plain Text</option>
+        </select>
+        <input type="file" id="file-input" hidden />
+        <button id="open-btn">打开文件</button>
+        <button id="clear-btn">清空</button>
+        <a class="home-link" href="../">← Gadgets</a>
+      </div>
+    </header>
+
+    <div class="editor-wrap" id="editor-wrap">
+      <pre class="hl-layer" aria-hidden="true"><code id="output" class="hljs"></code></pre>
+      <textarea id="input" class="input-layer" spellcheck="false"
+        placeholder="在此粘贴代码，或将文件拖入页面..."></textarea>
+    </div>
+
+    <footer class="status-bar">
+      <span>
+        已识别：<span class="lang-name" id="detected-name">—</span>
+        <span class="lang-source" id="detected-source"></span>
+      </span>
+      <span class="right" id="cursor-pos">Ln 1, Col 1</span>
+    </footer>
+  </div>
+  <div class="drop-overlay" id="drop-overlay">松开以加载文件</div>
+
+  <script type="module">
+    import hljs from "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/es/highlight.min.js";
+
+    // Languages we want to consider during auto-detection.
+    // (Python is detected as one bucket here; we then refine to py2/py3 ourselves.)
+    const AUTO_LANGS = [
+      "csharp", "go", "python", "javascript", "typescript", "java",
+      "kotlin", "swift", "rust", "cpp", "c", "ruby", "php",
+      "bash", "sql", "json", "yaml", "xml", "css", "markdown",
+    ];
+
+    const DISPLAY = {
+      auto: "自动识别",
+      csharp: "C#", go: "Go", python: "Python",
+      python2: "Python 2", python3: "Python 3",
+      javascript: "JavaScript", typescript: "TypeScript",
+      java: "Java", kotlin: "Kotlin", swift: "Swift", rust: "Rust",
+      cpp: "C++", c: "C", ruby: "Ruby", php: "PHP",
+      bash: "Bash", sql: "SQL", json: "JSON", yaml: "YAML",
+      xml: "HTML / XML", css: "CSS", markdown: "Markdown",
+      plaintext: "Plain Text",
+    };
+
+    // hljs only ships one "python" grammar — map our py2/py3 ids to it.
+    function hljsLang(id) {
+      if (id === "python2" || id === "python3") return "python";
+      return id;
+    }
+
+    /**
+     * Score Python source for dialect-specific syntactic markers and pick the
+     * winner. Python 3 wins ties (modern default). The grammar that hljs uses
+     * cannot make this distinction — this lives outside of hljs on purpose.
+     */
+    function classifyPython(src) {
+      const py2 = [
+        /\bprint\s+(?!\()[^\n]/,        // print statement: `print x`
+        /\bxrange\s*\(/,
+        /\braw_input\s*\(/,
+        /\bunicode\s*\(/,
+        /\bbasestring\b/,
+        /\bhas_key\s*\(/,
+        /\b\.iteritems\s*\(/,
+        /\b\.iterkeys\s*\(/,
+        /\b\.itervalues\s*\(/,
+        /\bexcept\s+\w+\s*,\s*\w+\s*:/,  // except E, e:
+        /\braise\s+\w+\s*,\s*['"]/,      // raise E, "msg"
+        /<>/,                            // legacy ne operator
+        /from\s+__future__\s+import/,    // 2-code reaching for 3 features
+      ];
+      const py3 = [
+        /\bprint\s*\(/,                  // print as function
+        /\bf['"]/,                       // f-string
+        /\basync\s+def\b/,
+        /\bawait\s+\w/,
+        /:\s*\w[\w\[\], .]*\s*=/,        // annotated assignment
+        /->\s*\w[\w\[\], .]*\s*:/,       // return annotation
+        /:=/,                            // walrus
+        /\bnonlocal\b/,
+        /\bmatch\s+\w[^\n]*:\s*\n\s+case\b/,
+      ];
+      let s2 = 0; for (const r of py2) if (r.test(src)) s2++;
+      let s3 = 0; for (const r of py3) if (r.test(src)) s3++;
+      return s2 > s3 ? "python2" : "python3";
+    }
+
+    function pickLanguage(src, override) {
+      if (override && override !== "auto") {
+        return { id: override, source: "manual" };
+      }
+      const trimmed = src.trim();
+      if (!trimmed) return { id: "plaintext", source: "auto" };
+      const res = hljs.highlightAuto(trimmed, AUTO_LANGS);
+      let id = res.language || "plaintext";
+      if (id === "python") id = classifyPython(src);
+      return { id, source: "auto" };
+    }
+
+    /**
+     * Wrap each line of highlighted HTML in <span class="ln"> so the CSS
+     * counter can render the gutter. hljs spans can straddle newlines (think
+     * multi-line strings); we track the open <span> stack across lines and
+     * re-emit the prefix/suffix to keep each wrapped line self-balanced.
+     */
+    function wrapLines(html) {
+      const lines = html.split("\n");
+      const open = [];
+      const out = [];
+      const tagRe = /<(\/?)span(\s[^>]*)?>/g;
+      for (const line of lines) {
+        const prefix = open.join("");
+        let m;
+        tagRe.lastIndex = 0;
+        while ((m = tagRe.exec(line)) !== null) {
+          if (m[1] === "/") open.pop();
+          else open.push(m[0]);
+        }
+        const suffix = "</span>".repeat(open.length);
+        out.push(`<span class="ln">${prefix}${line}${suffix}</span>`);
+      }
+      return out.join("");
+    }
+
+    function escapeHtml(s) {
+      return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    const input = document.getElementById("input");
+    const output = document.getElementById("output");
+    const hlLayer = document.querySelector(".hl-layer");
+    const editorWrap = document.getElementById("editor-wrap");
+    const langSelect = document.getElementById("lang-select");
+    const detectedName = document.getElementById("detected-name");
+    const detectedSource = document.getElementById("detected-source");
+    const cursorPos = document.getElementById("cursor-pos");
+    const fileInput = document.getElementById("file-input");
+    const openBtn = document.getElementById("open-btn");
+    const clearBtn = document.getElementById("clear-btn");
+    const dropOverlay = document.getElementById("drop-overlay");
+
+    /**
+     * Re-size the absolutely-positioned textarea to match the highlight
+     * layer's natural height. Without this, the textarea is capped at the
+     * viewport and the user can't type past the bottom edge.
+     */
+    function syncSize() {
+      const h = hlLayer.scrollHeight;
+      const w = hlLayer.scrollWidth;
+      input.style.height = h + "px";
+      input.style.width = Math.max(w, editorWrap.clientWidth) + "px";
+    }
+
+    function render() {
+      const src = input.value;
+      const { id, source } = pickLanguage(src, langSelect.value);
+
+      let highlighted;
+      try {
+        const lang = hljsLang(id);
+        highlighted = hljs.getLanguage(lang)
+          ? hljs.highlight(src, { language: lang, ignoreIllegals: true }).value
+          : escapeHtml(src);
+      } catch {
+        highlighted = escapeHtml(src);
+      }
+
+      output.className = `hljs language-${hljsLang(id)}`;
+      output.innerHTML = wrapLines(highlighted);
+
+      detectedName.textContent = DISPLAY[id] || id;
+      detectedSource.textContent = source === "manual" ? "· 手动" : "· 自动";
+
+      syncSize();
+    }
+
+    function updateCursorPos() {
+      const pos = input.selectionStart;
+      const before = input.value.slice(0, pos);
+      const line = before.split("\n").length;
+      const lastNl = before.lastIndexOf("\n");
+      const col = pos - (lastNl + 1) + 1;
+      cursorPos.textContent = `Ln ${line}, Col ${col}`;
+    }
+
+    input.addEventListener("input", () => {
+      render();
+      updateCursorPos();
+    });
+    input.addEventListener("keyup", updateCursorPos);
+    input.addEventListener("click", updateCursorPos);
+    input.addEventListener("select", updateCursorPos);
+
+    // Tab inserts spaces instead of moving focus away from the editor.
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        const indent = "    ";
+        input.setRangeText(indent, start, end, "end");
+        render();
+        updateCursorPos();
+      }
+    });
+
+    langSelect.addEventListener("change", render);
+
+    openBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const f = fileInput.files?.[0];
+      if (!f) return;
+      input.value = await f.text();
+      fileInput.value = "";
+      langSelect.value = "auto";
+      render();
+      updateCursorPos();
+    });
+
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      render();
+      updateCursorPos();
+    });
+
+    let dragDepth = 0;
+    window.addEventListener("dragenter", (e) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      e.preventDefault();
+      dragDepth++;
+      dropOverlay.classList.add("active");
+    });
+    window.addEventListener("dragover", (e) => {
+      if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+    });
+    window.addEventListener("dragleave", (e) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) dropOverlay.classList.remove("active");
+    });
+    window.addEventListener("drop", async (e) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      dragDepth = 0;
+      dropOverlay.classList.remove("active");
+      const f = e.dataTransfer.files[0];
+      input.value = await f.text();
+      langSelect.value = "auto";
+      render();
+      updateCursorPos();
+    });
+
+    window.addEventListener("resize", syncSize);
+
+    input.value = `# Python 3 example — f-strings + type hints + async
+async def greet(name: str) -> str:
+    msg = f"Hello, {name}!"
+    print(msg)
+    return msg
+
+class Greeter:
+    def __init__(self, prefix: str = "Hi"):
+        self.prefix = prefix
+
+    async def say(self, name: str) -> None:
+        await greet(f"{self.prefix}, {name}")
+`;
+    render();
+    updateCursorPos();
+  </script>
+</body>
+</html>

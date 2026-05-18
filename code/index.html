@@ -111,6 +111,110 @@
       cursor: pointer;
     }
     select.lang-select:hover { border-color: var(--accent); }
+
+    /* ----- outline sidebar ----- */
+    .main {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+    .outline {
+      width: 240px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+      transition: width 0.18s ease;
+    }
+    .outline.collapsed { width: 30px; }
+    .outline.collapsed .outline-body,
+    .outline.collapsed .outline-header .title { display: none; }
+    .outline.collapsed .outline-header {
+      justify-content: center;
+      padding: 6px 0;
+    }
+    .outline-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .outline-header .toggle {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .outline-header .toggle:hover { color: var(--accent); }
+    .outline-body {
+      flex: 1;
+      overflow: auto;
+    }
+    .outline-list {
+      list-style: none;
+      margin: 0;
+      padding: 4px 0;
+    }
+    .outline-list li {
+      padding: 3px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      line-height: 1.5;
+    }
+    .outline-list li.kind-class,
+    .outline-list li.kind-impl {
+      color: var(--accent-2);
+    }
+    .outline-list li.kind-method { padding-left: 28px; }
+    .outline-list li:hover { background: rgba(122, 162, 247, 0.1); }
+    .outline-list li.active { background: rgba(122, 162, 247, 0.18); }
+    .outline-list li .name {
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+      font-size: 12.5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+      flex: 1;
+    }
+    .outline-list li .line-no {
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+      opacity: 0.6;
+      flex-shrink: 0;
+    }
+    .outline-empty {
+      color: var(--text-dim);
+      font-size: 12px;
+      padding: 14px 12px;
+      text-align: center;
+      opacity: 0.7;
+    }
+
+    /* Flash highlight for the target line after a jump. */
+    .hl-layer .ln.target-flash {
+      animation: target-flash 1.6s ease-out;
+    }
+    @keyframes target-flash {
+      0%   { background: rgba(187, 154, 247, 0.35); }
+      40%  { background: rgba(187, 154, 247, 0.20); }
+      100% { background: transparent; }
+    }
   </style>
 </head>
 <body>
@@ -150,10 +254,22 @@
       </div>
     </header>
 
-    <div class="editor-wrap" id="editor-wrap">
-      <pre class="hl-layer" aria-hidden="true"><code id="output" class="hljs"></code></pre>
-      <textarea id="input" class="input-layer" spellcheck="false"
-        placeholder="在此粘贴代码，或将文件拖入页面..."></textarea>
+    <div class="main">
+      <aside class="outline" id="outline">
+        <div class="outline-header">
+          <span class="title">函数 / 类</span>
+          <button class="toggle" id="outline-toggle" title="折叠/展开">«</button>
+        </div>
+        <div class="outline-body">
+          <ul class="outline-list" id="outline-list"></ul>
+        </div>
+      </aside>
+
+      <div class="editor-wrap" id="editor-wrap">
+        <pre class="hl-layer" aria-hidden="true"><code id="output" class="hljs"></code></pre>
+        <textarea id="input" class="input-layer" spellcheck="false"
+          placeholder="在此粘贴代码，或将文件拖入页面..."></textarea>
+      </div>
     </div>
 
     <footer class="status-bar">
@@ -278,6 +394,271 @@
         .replace(/'/g, "&#39;");
     }
 
+    // ------------------------------------------------------------------
+    //  Function / class extractors
+    //  Each returns an array of { kind, name, line, signature?, parent?,
+    //  displayName }. Best-effort regex; not a real parser. Misses are
+    //  acceptable for an outline tool — false positives are worse, so the
+    //  patterns lean strict.
+    // ------------------------------------------------------------------
+
+    function countBraces(line) {
+      // Naive: doesn't strip strings/comments. Good enough at the line scale
+      // for brace-language scope tracking.
+      let open = 0, close = 0;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === "{") open++;
+        else if (line[i] === "}") close++;
+      }
+      return open - close;
+    }
+
+    function extractPython(src) {
+      const lines = src.split("\n");
+      const items = [];
+      const classStack = []; // [{ indent, name }]
+      const reClass = /^(\s*)class\s+([A-Za-z_]\w*)/;
+      const reDef = /^(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue;
+        const indent = (line.match(/^(\s*)/)[1] || "").length;
+        while (classStack.length && indent <= classStack[classStack.length - 1].indent) {
+          classStack.pop();
+        }
+        const c = reClass.exec(line);
+        if (c) {
+          classStack.push({ indent, name: c[2] });
+          items.push({ kind: "class", name: c[2], displayName: c[2], line: i + 1 });
+          continue;
+        }
+        const d = reDef.exec(line);
+        if (d) {
+          const parent = classStack.length ? classStack[classStack.length - 1].name : null;
+          const displayName = parent ? `${parent}.${d[2]}` : d[2];
+          items.push({
+            kind: parent ? "method" : "function",
+            name: d[2], parent, displayName,
+            signature: `(${d[3].trim()})`, line: i + 1,
+          });
+        }
+      }
+      return items;
+    }
+
+    function extractGo(src) {
+      const lines = src.split("\n");
+      const items = [];
+      const reRecv = /^func\s*\(\s*\w+\s+\*?(\w+)\s*\)\s*(\w+)\s*\(([^)]*)\)/;
+      const reFn = /^func\s+(\w+)\s*\(([^)]*)\)/;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        let m = reRecv.exec(line);
+        if (m) {
+          items.push({
+            kind: "method", name: m[2], parent: m[1],
+            displayName: `${m[1]}.${m[2]}`,
+            signature: `(${m[3].trim()})`, line: i + 1,
+          });
+          continue;
+        }
+        m = reFn.exec(line);
+        if (m) {
+          items.push({
+            kind: "function", name: m[1], displayName: m[1],
+            signature: `(${m[2].trim()})`, line: i + 1,
+          });
+        }
+      }
+      return items;
+    }
+
+    // Keywords that look like method calls but aren't method definitions.
+    const STMT_KEYWORDS = new Set([
+      "if", "for", "while", "switch", "catch", "using", "foreach",
+      "return", "new", "typeof", "sizeof", "lock", "fixed", "checked",
+      "unchecked", "do", "yield", "throw", "await",
+    ]);
+
+    function extractCSharpLike(src, opts = {}) {
+      // Works for C# / Java / Kotlin (rough). opts.allowFun adds Kotlin-style.
+      const lines = src.split("\n");
+      const items = [];
+      const classStack = []; // [{ name, depth }]
+      let depth = 0;
+      const reMethod = /^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|sealed|abstract|extern|unsafe|readonly|new|partial|final|synchronized|native|default)\s+)*[\w<>?,. \[\]]+\s+(\w+)\s*\(([^)]*)\)\s*(?:\{|;|=>|throws\b|where\b|\s*$)/;
+      const reClass = /^\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|final)\s+)*(?:class|struct|interface|record|enum)\s+(\w+)/;
+      const reKotlinFun = /^\s*(?:(?:public|private|protected|internal|open|override|abstract|final|suspend|inline|operator)\s+)*fun\s+(?:<[^>]+>\s+)?(?:[\w<>?,. ]+\.)?(\w+)\s*\(([^)]*)\)/;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const c = reClass.exec(line);
+        if (c) {
+          classStack.push({ name: c[1], depth: depth + 1 });
+          items.push({ kind: "class", name: c[1], displayName: c[1], line: i + 1 });
+          depth += countBraces(line);
+          while (classStack.length && depth < classStack[classStack.length - 1].depth) classStack.pop();
+          continue;
+        }
+        let matched = false;
+        if (opts.allowFun) {
+          const k = reKotlinFun.exec(line);
+          if (k && !STMT_KEYWORDS.has(k[1])) {
+            const parent = classStack.length ? classStack[classStack.length - 1].name : null;
+            items.push({
+              kind: parent ? "method" : "function",
+              name: k[1], parent,
+              displayName: parent ? `${parent}.${k[1]}` : k[1],
+              signature: `(${k[2].trim()})`, line: i + 1,
+            });
+            matched = true;
+          }
+        }
+        if (!matched) {
+          const m = reMethod.exec(line);
+          if (m && !STMT_KEYWORDS.has(m[1])) {
+            const parent = classStack.length ? classStack[classStack.length - 1].name : null;
+            items.push({
+              kind: parent ? "method" : "function",
+              name: m[1], parent,
+              displayName: parent ? `${parent}.${m[1]}` : m[1],
+              signature: `(${m[2].trim()})`, line: i + 1,
+            });
+          }
+        }
+        depth += countBraces(line);
+        while (classStack.length && depth < classStack[classStack.length - 1].depth) classStack.pop();
+      }
+      return items;
+    }
+
+    function extractJS(src) {
+      const lines = src.split("\n");
+      const items = [];
+      const classStack = [];
+      let depth = 0;
+      const reClass = /^\s*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+(\w+)/;
+      const reFn = /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(\w+)\s*\(([^)]*)\)/;
+      const reArrow = /^\s*(?:export\s+(?:default\s+)?)?(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?=\s*(?:async\s+)?\(([^)]*)\)\s*(?::\s*[^=]+)?=>/;
+      const reConstFn = /^\s*(?:export\s+(?:default\s+)?)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\s*\*?\s*\(([^)]*)\)/;
+      const reMethod = /^\s+(?:static\s+|async\s+|get\s+|set\s+|\*\s*|public\s+|private\s+|protected\s+|readonly\s+|override\s+)*([\w$]+)\s*\(([^)]*)\)\s*(?:\{|:\s*[\w<>?,. \[\]]+\s*\{)/;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const c = reClass.exec(line);
+        if (c) {
+          classStack.push({ name: c[1], depth: depth + 1 });
+          items.push({ kind: "class", name: c[1], displayName: c[1], line: i + 1 });
+          depth += countBraces(line);
+          while (classStack.length && depth < classStack[classStack.length - 1].depth) classStack.pop();
+          continue;
+        }
+        const fn = reFn.exec(line);
+        if (fn) {
+          items.push({ kind: "function", name: fn[1], displayName: fn[1], signature: `(${fn[2].trim()})`, line: i + 1 });
+          depth += countBraces(line);
+          continue;
+        }
+        const cf = reConstFn.exec(line);
+        if (cf) {
+          items.push({ kind: "function", name: cf[1], displayName: cf[1], signature: `(${cf[2].trim()})`, line: i + 1 });
+          depth += countBraces(line);
+          continue;
+        }
+        const ar = reArrow.exec(line);
+        if (ar) {
+          items.push({ kind: "function", name: ar[1], displayName: ar[1], signature: `(${ar[2].trim()})`, line: i + 1 });
+          depth += countBraces(line);
+          continue;
+        }
+        if (classStack.length) {
+          const m = reMethod.exec(line);
+          if (m && !STMT_KEYWORDS.has(m[1])) {
+            const parent = classStack[classStack.length - 1].name;
+            items.push({
+              kind: "method", name: m[1], parent,
+              displayName: `${parent}.${m[1]}`,
+              signature: `(${m[2].trim()})`, line: i + 1,
+            });
+          }
+        }
+        depth += countBraces(line);
+        while (classStack.length && depth < classStack[classStack.length - 1].depth) classStack.pop();
+      }
+      return items;
+    }
+
+    function extractRust(src) {
+      const lines = src.split("\n");
+      const items = [];
+      const reFn = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+|const\s+|unsafe\s+|extern\s+(?:"[^"]*"\s+)?)*fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/;
+      const reImpl = /^\s*impl(?:<[^>]*>)?\s+(?:[\w<>:,'\s+&]+?\s+for\s+)?([\w<>]+)/;
+      const reStruct = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait)\s+(\w+)/;
+      const implStack = [];
+      let depth = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const s = reStruct.exec(line);
+        if (s) {
+          items.push({ kind: "class", name: s[1], displayName: s[1], line: i + 1 });
+          depth += countBraces(line);
+          continue;
+        }
+        const im = reImpl.exec(line);
+        if (im) {
+          implStack.push({ name: im[1], depth: depth + 1 });
+          items.push({ kind: "impl", name: im[1], displayName: `impl ${im[1]}`, line: i + 1 });
+          depth += countBraces(line);
+          continue;
+        }
+        const fn = reFn.exec(line);
+        if (fn) {
+          const parent = implStack.length ? implStack[implStack.length - 1].name : null;
+          items.push({
+            kind: parent ? "method" : "function",
+            name: fn[1], parent,
+            displayName: parent ? `${parent}.${fn[1]}` : fn[1],
+            signature: `(${fn[2].trim()})`, line: i + 1,
+          });
+        }
+        depth += countBraces(line);
+        while (implStack.length && depth < implStack[implStack.length - 1].depth) implStack.pop();
+      }
+      return items;
+    }
+
+    function extractCFamily(src) {
+      // C / C++ are hard without a real parser. Catch the common case of a
+      // function definition that opens its body on the same line.
+      const lines = src.split("\n");
+      const items = [];
+      // [optional return type incl. pointers] name(...) { ...
+      const re = /^[ \t]*(?:[A-Za-z_][\w:]*\s*[*&]?\s+)+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?\{?\s*$/;
+      for (let i = 0; i < lines.length; i++) {
+        const m = re.exec(lines[i]);
+        if (!m) continue;
+        if (STMT_KEYWORDS.has(m[1])) continue;
+        items.push({ kind: "function", name: m[1], displayName: m[1], signature: `(${m[2].trim()})`, line: i + 1 });
+      }
+      return items;
+    }
+
+    function extractFunctions(src, langId) {
+      switch (langId) {
+        case "python2":
+        case "python3":
+        case "python":   return extractPython(src);
+        case "go":       return extractGo(src);
+        case "csharp":   return extractCSharpLike(src);
+        case "java":     return extractCSharpLike(src);
+        case "kotlin":   return extractCSharpLike(src, { allowFun: true });
+        case "javascript":
+        case "typescript": return extractJS(src);
+        case "rust":     return extractRust(src);
+        case "c":
+        case "cpp":      return extractCFamily(src);
+        default:         return [];
+      }
+    }
+
     const input = document.getElementById("input");
     const output = document.getElementById("output");
     const hlLayer = document.querySelector(".hl-layer");
@@ -290,6 +671,13 @@
     const openBtn = document.getElementById("open-btn");
     const clearBtn = document.getElementById("clear-btn");
     const dropOverlay = document.getElementById("drop-overlay");
+    const outline = document.getElementById("outline");
+    const outlineList = document.getElementById("outline-list");
+    const outlineToggle = document.getElementById("outline-toggle");
+
+    // Latest extracted functions for the current source. The hash router
+    // and click handler both consume this.
+    let currentFunctions = [];
 
     /**
      * Re-size the absolutely-positioned textarea to match the highlight
@@ -323,7 +711,102 @@
       detectedName.textContent = DISPLAY[id] || id;
       detectedSource.textContent = source === "manual" ? "· 手动" : "· 自动";
 
+      currentFunctions = extractFunctions(src, id);
+      renderOutline();
+
       syncSize();
+    }
+
+    /**
+     * Build the outline sidebar from `currentFunctions`. Empty state shows a
+     * placeholder. Selecting the active item is left to jump events.
+     */
+    function renderOutline() {
+      outlineList.innerHTML = "";
+      if (!currentFunctions.length) {
+        const empty = document.createElement("div");
+        empty.className = "outline-empty";
+        empty.textContent = "暂无函数 / 类";
+        outlineList.appendChild(empty);
+        return;
+      }
+      for (const item of currentFunctions) {
+        const li = document.createElement("li");
+        li.className = `kind-${item.kind}`;
+        li.dataset.line = item.line;
+        li.dataset.displayName = item.displayName;
+        const nameEl = document.createElement("span");
+        nameEl.className = "name";
+        nameEl.textContent = item.displayName;
+        if (item.signature) nameEl.title = `${item.displayName}${item.signature}`;
+        const lineEl = document.createElement("span");
+        lineEl.className = "line-no";
+        lineEl.textContent = String(item.line);
+        li.appendChild(nameEl);
+        li.appendChild(lineEl);
+        li.addEventListener("click", () => {
+          jumpToLine(item.line);
+          setActiveOutlineItem(li);
+          // Push the function into the URL so the location is shareable.
+          // Use replaceState (not assignment) to avoid an extra hashchange
+          // that would fight with the click handler.
+          history.replaceState(null, "", `#fn=${encodeURIComponent(item.displayName)}`);
+        });
+        outlineList.appendChild(li);
+      }
+    }
+
+    function setActiveOutlineItem(li) {
+      outlineList.querySelectorAll("li.active").forEach((el) => el.classList.remove("active"));
+      if (li) li.classList.add("active");
+    }
+
+    /**
+     * Scroll the editor so `lineNum` (1-based) is centered, move the caret
+     * to the start of that line, and flash a brief highlight.
+     */
+    function jumpToLine(lineNum) {
+      const lns = hlLayer.querySelectorAll(".ln");
+      const target = lns[lineNum - 1];
+      if (!target) return;
+
+      // Move the caret to the start of the target line. Compute the char
+      // offset by counting the lengths of the preceding lines.
+      const allLines = input.value.split("\n");
+      let offset = 0;
+      for (let i = 0; i < lineNum - 1 && i < allLines.length; i++) {
+        offset += allLines[i].length + 1;  // +1 for the joining \n
+      }
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(offset, offset);
+
+      // Center the target line in the viewport. We can't trust the textarea
+      // to do this (overflow: hidden), so we drive .editor-wrap directly.
+      const wrapRect = editorWrap.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const delta = (targetRect.top - wrapRect.top) - (wrapRect.height / 2) + (target.offsetHeight / 2);
+      editorWrap.scrollTo({ top: editorWrap.scrollTop + delta, behavior: "smooth" });
+
+      // Restart the flash animation by toggling the class.
+      target.classList.remove("target-flash");
+      // Force reflow so removing + re-adding the class re-fires the animation.
+      void target.offsetWidth;
+      target.classList.add("target-flash");
+    }
+
+    function jumpFromHash() {
+      const h = location.hash.replace(/^#/, "");
+      if (!h) return;
+      const params = new URLSearchParams(h);
+      const fn = params.get("fn");
+      if (!fn) return;
+      const match = currentFunctions.find(
+        (it) => it.displayName === fn || it.name === fn,
+      );
+      if (!match) return;
+      jumpToLine(match.line);
+      const li = outlineList.querySelector(`li[data-display-name="${CSS.escape(fn)}"]`);
+      setActiveOutlineItem(li);
     }
 
     function updateCursorPos() {
@@ -404,6 +887,15 @@
 
     window.addEventListener("resize", syncSize);
 
+    outlineToggle.addEventListener("click", () => {
+      const collapsed = outline.classList.toggle("collapsed");
+      outlineToggle.textContent = collapsed ? "»" : "«";
+      // Width change reflows the editor; resync the textarea width.
+      setTimeout(syncSize, 200);
+    });
+
+    window.addEventListener("hashchange", jumpFromHash);
+
     input.value = `# Python 3 example — f-strings + type hints + async
 async def greet(name: str) -> str:
     msg = f"Hello, {name}!"
@@ -419,6 +911,9 @@ class Greeter:
 `;
     render();
     updateCursorPos();
+    // If the page was opened with #fn=..., honor it once the initial outline
+    // has been populated.
+    if (location.hash) jumpFromHash();
   </script>
 </body>
 </html>

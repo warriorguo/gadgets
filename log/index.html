@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Unity 日志精简 · Gadgets</title>
+  <link rel="stylesheet" href="../assets/common.css" />
+  <style>
+    .main {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+    .pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .pane-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .pane-header .label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .pane-header .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+    .pane-header .dot.input { background: var(--accent-2); }
+    .pane-header .dot.output { background: var(--ok); }
+    .pane-header .count {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+    .pane-header .count.has-value { color: var(--ok); }
+
+    textarea {
+      flex: 1;
+      width: 100%;
+      background: var(--code-bg);
+      color: var(--text);
+      border: none;
+      padding: 14px 18px;
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      resize: none;
+      outline: none;
+      tab-size: 4;
+    }
+    textarea::placeholder { color: var(--text-dim); opacity: 0.55; }
+    textarea.output {
+      background: var(--bg);
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+
+    .divider {
+      width: 1px;
+      background: var(--border);
+      cursor: col-resize;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .divider::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -3px;
+      right: -3px;
+    }
+    .divider:hover, .divider.active { background: var(--accent); }
+
+    .stats-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 18px;
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .stats-bar .reduction {
+      color: var(--ok);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>Unity 日志精简</h1>
+      <div class="actions">
+        <button id="clear-btn">清空</button>
+        <button id="copy-btn">复制输出</button>
+        <a class="home-link" href="../">← Gadgets</a>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="pane">
+        <div class="pane-header">
+          <span class="label"><span class="dot input"></span> 输入</span>
+          <span class="count" id="input-count"></span>
+        </div>
+        <textarea id="input" placeholder="在此粘贴 Unity 编辑器日志……" spellcheck="false"></textarea>
+      </div>
+      <div class="divider" id="divider"></div>
+      <div class="pane">
+        <div class="pane-header">
+          <span class="label"><span class="dot output"></span> 输出</span>
+          <span class="count" id="output-count"></span>
+        </div>
+        <textarea id="output" class="output" readonly placeholder="精简后的日志将显示在这里……" onclick="this.select()" spellcheck="false"></textarea>
+      </div>
+    </div>
+
+    <div class="stats-bar">
+      <span id="stats-text">在左侧粘贴 Unity 日志即可精简</span>
+      <span class="reduction" id="reduction-text"></span>
+    </div>
+  </div>
+
+  <script>
+    const inputEl = document.getElementById("input");
+    const outputEl = document.getElementById("output");
+    const inputCount = document.getElementById("input-count");
+    const outputCount = document.getElementById("output-count");
+    const statsText = document.getElementById("stats-text");
+    const reductionText = document.getElementById("reduction-text");
+
+    // Reduce each log block (message + stack trace) to just its first line —
+    // the actual log message. Blocks are separated by blank lines.
+    function simplify(text) {
+      if (!text.trim()) return "";
+
+      const lines = text.split("\n");
+      const result = [];
+      let inBlock = false;
+      let firstLine = null;
+
+      for (const line of lines) {
+        if (line.trim() === "") {
+          if (inBlock && firstLine !== null) {
+            result.push(firstLine);
+            result.push("");
+            firstLine = null;
+            inBlock = false;
+          }
+          continue;
+        }
+        if (!inBlock) {
+          firstLine = line;
+          inBlock = true;
+        }
+      }
+
+      if (inBlock && firstLine !== null) {
+        result.push(firstLine);
+        result.push("");
+      }
+
+      return result.join("\n").trimEnd();
+    }
+
+    function update() {
+      const input = inputEl.value;
+      const output = simplify(input);
+      outputEl.value = output;
+
+      const inLines = input.trim() ? input.trim().split("\n").length : 0;
+      const outLines = output.trim() ? output.trim().split("\n").length : 0;
+
+      setCount(inputCount, inLines);
+      setCount(outputCount, outLines);
+
+      if (inLines > 0 && outLines > 0) {
+        const removed = inLines - outLines;
+        const pct = Math.round((removed / inLines) * 100);
+        statsText.textContent = `输入 ${inLines} 行，输出 ${outLines} 行`;
+        reductionText.textContent = `精简 ${removed} 行（减少 ${pct}%）`;
+      } else {
+        statsText.textContent = "在左侧粘贴 Unity 日志即可精简";
+        reductionText.textContent = "";
+      }
+    }
+
+    function setCount(el, n) {
+      if (n) {
+        el.textContent = `${n} 行`;
+        el.classList.add("has-value");
+      } else {
+        el.textContent = "";
+        el.classList.remove("has-value");
+      }
+    }
+
+    inputEl.addEventListener("input", update);
+
+    document.getElementById("clear-btn").addEventListener("click", () => {
+      inputEl.value = "";
+      update();
+      inputEl.focus();
+    });
+
+    document.getElementById("copy-btn").addEventListener("click", () => {
+      navigator.clipboard.writeText(outputEl.value).then(() => {
+        const btn = document.getElementById("copy-btn");
+        const original = btn.textContent;
+        btn.textContent = "已复制!";
+        setTimeout(() => (btn.textContent = original), 1500);
+      });
+    });
+
+    // Resizable divider
+    const divider = document.getElementById("divider");
+    let dragging = false;
+    divider.addEventListener("mousedown", () => {
+      dragging = true;
+      divider.classList.add("active");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const main = document.querySelector(".main");
+      const rect = main.getBoundingClientRect();
+      const ratio = (e.clientX - rect.left) / rect.width;
+      const clamped = Math.max(0.2, Math.min(0.8, ratio));
+      const panes = main.querySelectorAll(".pane");
+      panes[0].style.flex = clamped;
+      panes[1].style.flex = 1 - clamped;
+    });
+    document.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      divider.classList.remove("active");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    });
+  </script>
+</body>
+</html>

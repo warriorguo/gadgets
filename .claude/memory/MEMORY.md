@@ -1,0 +1,1 @@
+- [Local binary = Swift WebView](local-binary-means-swift-webview.md) — "make this a local binary" means a native Swift + WKWebView app, not a Go/HTTP server

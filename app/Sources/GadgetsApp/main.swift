@@ -32,11 +32,16 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         // Normalize the path the way a static file server would: a directory
-        // (empty or trailing "/") serves its index.html.
+        // serves its index.html. Note URL.path strips a trailing slash
+        // ("/log/" -> "/log"), so we can't rely on it to spot a directory —
+        // instead we fall back to "<path>/index.html" when there's no direct hit.
         var path = url.path
         if path.hasPrefix("/") { path.removeFirst() }
         if path.isEmpty { path = "index.html" }
-        else if path.hasSuffix("/") { path += "index.html" }
+        if embeddedAssets[path] == nil {
+            let dir = path.hasSuffix("/") ? path : path + "/"
+            if embeddedAssets[dir + "index.html"] != nil { path = dir + "index.html" }
+        }
 
         guard let b64 = embeddedAssets[path], let data = Data(base64Encoded: b64) else {
             let resp = HTTPURLResponse(url: url, statusCode: 404,

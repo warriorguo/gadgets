@@ -89,13 +89,56 @@ private let clipboardShim = """
     try { window.webkit.messageHandlers.copy.postMessage(String(text)); } catch (e) {}
     return Promise.resolve();
   };
-  if (!navigator.clipboard) {
-    Object.defineProperty(navigator, 'clipboard', { value: {}, configurable: true });
-  }
-  try { navigator.clipboard.writeText = write; }
-  catch (e) { Object.defineProperty(navigator, 'clipboard', { value: { writeText: write }, configurable: true }); }
+  // WKWebView under a custom scheme is not a secure context, so the native
+  // navigator.clipboard exists but its writeText rejects. Assigning to
+  // writeText silently fails (it isn't writable), so install our own
+  // `clipboard` data property on the navigator instance to shadow it entirely.
+  try {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      writable: true,
+      value: { writeText: write, readText: () => Promise.resolve('') },
+    });
+  } catch (e) {}
 })();
 """
+
+// MARK: - Main menu
+//
+// A plain NSApplication has no menu bar, so the standard editing key equivalents
+// (Cmd+X/C/V/A) are never translated into cut:/copy:/paste:/selectAll: actions —
+// which is why Cmd+V didn't paste into the tools. Installing a standard Edit menu
+// wires those shortcuts back up through the responder chain to the WKWebView.
+
+private func makeMainMenu(appName: String) -> NSMenu {
+    let mainMenu = NSMenu()
+
+    let appItem = NSMenuItem()
+    mainMenu.addItem(appItem)
+    let appMenu = NSMenu()
+    appItem.submenu = appMenu
+    appMenu.addItem(withTitle: "Hide \(appName)",
+                    action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+    appMenu.addItem(.separator())
+    appMenu.addItem(withTitle: "Quit \(appName)",
+                    action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+    let editItem = NSMenuItem()
+    mainMenu.addItem(editItem)
+    let editMenu = NSMenu(title: "Edit")
+    editItem.submenu = editMenu
+    editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+    redo.keyEquivalentModifierMask = [.command, .shift]
+    editMenu.addItem(.separator())
+    editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(withTitle: "Select All",
+                     action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a")
+
+    return mainMenu
+}
 
 // MARK: - App
 
@@ -104,6 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var webView: WKWebView!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.mainMenu = makeMainMenu(appName: "Gadgets")
+
         let controller = WKUserContentController()
         controller.add(ClipboardBridge(), name: "copy")
         controller.addUserScript(WKUserScript(source: clipboardShim,

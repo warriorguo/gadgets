@@ -6,5 +6,6 @@ COPY markdown/ /usr/share/nginx/html/markdown/
 COPY json/     /usr/share/nginx/html/json/
 COPY code/     /usr/share/nginx/html/code/
 COPY log/      /usr/share/nginx/html/log/
+COPY calc/     /usr/share/nginx/html/calc/
 
 EXPOSE 80

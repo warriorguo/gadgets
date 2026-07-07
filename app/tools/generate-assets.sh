@@ -18,6 +18,7 @@ FILES=(
   "json/index.html"
   "code/index.html"
   "log/index.html"
+  "calc/index.html"
 )
 
 {

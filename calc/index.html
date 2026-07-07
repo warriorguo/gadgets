@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>表达式计算器 · Gadgets</title>
+  <link rel="stylesheet" href="../assets/common.css" />
+  <style>
+    .main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+    }
+    .calc {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 28px 24px;
+      max-width: 720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .expr-input {
+      width: 100%;
+      background: var(--code-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 22px;
+      line-height: 1.4;
+      outline: none;
+      resize: none;
+      transition: border-color 0.15s;
+    }
+    .expr-input:focus { border-color: var(--accent); }
+    .expr-input::placeholder { color: var(--text-dim); opacity: 0.5; }
+    .expr-input.error { border-color: var(--danger); }
+
+    .result {
+      margin-top: 14px;
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .result .value {
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 28px;
+      font-weight: 600;
+      color: var(--ok);
+      overflow-x: auto;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .result .value.empty { color: var(--text-dim); font-weight: 400; font-size: 15px; }
+    .result .value.error { color: var(--danger); font-size: 15px; font-weight: 400; white-space: normal; }
+    .result .copy {
+      flex-shrink: 0;
+      font-size: 12px;
+      padding: 6px 12px;
+    }
+    .result .copy[hidden] { display: none; }
+
+    /* Keypad of common operators / functions */
+    .keypad {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+    }
+    .keypad button {
+      padding: 12px 0;
+      font-size: 15px;
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    }
+    .keypad button.fn { font-size: 13px; color: var(--accent-2); }
+    .keypad button.op { color: var(--accent); }
+    .keypad button.wide { grid-column: span 2; }
+
+    .history {
+      margin-top: 22px;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .history-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .history-head .clear-hist {
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+    .history-head .clear-hist:hover { color: var(--danger); }
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .history-item {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 7px 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+      font-size: 13px;
+    }
+    .history-item:hover { border-color: var(--accent); }
+    .history-item .h-expr { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-item .h-val { color: var(--ok); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .history-empty { color: var(--text-dim); font-size: 12px; opacity: 0.6; padding: 4px 2px; }
+
+    .hint {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--text-dim);
+      opacity: 0.75;
+      line-height: 1.6;
+    }
+    .hint code {
+      background: var(--code-bg);
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>表达式计算器</h1>
+      <div class="actions">
+        <button id="clear-btn">清空</button>
+        <a class="home-link" href="../">← Gadgets</a>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="calc">
+        <input id="expr" class="expr-input" type="text" spellcheck="false"
+               autocomplete="off" autocapitalize="off"
+               placeholder="输入表达式，如 (1 + 2) × 3 ^ 2 / sqrt(9)" />
+
+        <div class="result">
+          <span id="value" class="value empty">结果将显示在这里</span>
+          <button id="copy-btn" class="copy" hidden>复制</button>
+        </div>
+
+        <div class="keypad" id="keypad">
+          <button data-ins="(">(</button>
+          <button data-ins=")">)</button>
+          <button class="op" data-ins="+">+</button>
+          <button class="op" data-ins="−">−</button>
+          <button class="op" data-ins="×">×</button>
+          <button class="op" data-ins="÷">÷</button>
+          <button class="op" data-ins="^">^</button>
+          <button class="op" data-ins="%">%</button>
+          <button class="fn" data-ins="sqrt(">√</button>
+          <button class="fn" data-ins="pi">π</button>
+          <button class="fn" data-ins="sin(">sin</button>
+          <button class="fn" data-ins="cos(">cos</button>
+          <button class="fn" data-ins="tan(">tan</button>
+          <button class="fn" data-ins="log(">log</button>
+          <button class="fn" data-ins="ln(">ln</button>
+          <button class="fn" data-ins="abs(">abs</button>
+          <button data-ins="." class="op">.</button>
+          <button id="backspace" class="op">⌫</button>
+        </div>
+
+        <div class="hint">
+          支持 <code>+ − × ÷</code>（或 <code>* /</code>）、幂 <code>^</code>、取模 <code>%</code>、括号，
+          函数 <code>sqrt cbrt abs sin cos tan asin acos atan log ln exp floor ceil round</code>，
+          常量 <code>pi e tau</code>。回车加入历史。
+        </div>
+
+        <div class="history">
+          <div class="history-head">
+            <span>历史</span>
+            <button class="clear-hist" id="clear-hist">清空历史</button>
+          </div>
+          <div class="history-list" id="history-list">
+            <div class="history-empty">还没有计算记录，按回车保存一条。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---- Safe expression evaluator (recursive-descent, no eval) ----------
+    //
+    // Grammar (lowest to highest precedence):
+    //   expr    := addSub
+    //   addSub  := mulDiv (('+' | '-') mulDiv)*
+    //   mulDiv  := unary (('*' | '/' | '%') unary)*
+    //   unary   := ('+' | '-') unary | power
+    //   power   := atom ('^' unary)?        // right-associative
+    //   atom    := number | const | func '(' expr ')' | '(' expr ')'
+    //
+    // '×' '÷' '−' are normalized to '*' '/' '-' before tokenizing.
+
+    const FUNCS = {
+      sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs,
+      sin: Math.sin, cos: Math.cos, tan: Math.tan,
+      asin: Math.asin, acos: Math.acos, atan: Math.atan,
+      log: Math.log10, ln: Math.log, exp: Math.exp,
+      floor: Math.floor, ceil: Math.ceil, round: Math.round,
+    };
+    const CONSTS = { pi: Math.PI, e: Math.E, tau: Math.PI * 2 };
+
+    function tokenize(src) {
+      const s = src.replace(/×/g, "*").replace(/÷/g, "/").replace(/[−–—]/g, "-");
+      const tokens = [];
+      let i = 0;
+      while (i < s.length) {
+        const c = s[i];
+        if (c === " " || c === "\t") { i++; continue; }
+        if (/[0-9.]/.test(c)) {
+          const m = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(s.slice(i));
+          if (!m) throw new Error(`数字格式有误：位置 ${i + 1}`);
+          tokens.push({ t: "num", v: parseFloat(m[0]) });
+          i += m[0].length;
+          continue;
+        }
+        if (/[a-zA-Z_]/.test(c)) {
+          const m = /^[a-zA-Z_]\w*/.exec(s.slice(i));
+          tokens.push({ t: "name", v: m[0] });
+          i += m[0].length;
+          continue;
+        }
+        if ("+-*/%^()".includes(c)) {
+          tokens.push({ t: c });
+          i++;
+          continue;
+        }
+        throw new Error(`无法识别的字符 “${c}”`);
+      }
+      return tokens;
+    }
+
+    function parse(tokens) {
+      let pos = 0;
+      const peek = () => tokens[pos];
+      const next = () => tokens[pos++];
+      const expect = (t) => {
+        if (!peek() || peek().t !== t) throw new Error(`缺少 “${t}”`);
+        return next();
+      };
+
+      function addSub() {
+        let left = mulDiv();
+        while (peek() && (peek().t === "+" || peek().t === "-")) {
+          const op = next().t;
+          const right = mulDiv();
+          left = op === "+" ? left + right : left - right;
+        }
+        return left;
+      }
+      function mulDiv() {
+        let left = unary();
+        while (peek() && (peek().t === "*" || peek().t === "/" || peek().t === "%")) {
+          const op = next().t;
+          const right = unary();
+          if (op === "*") left = left * right;
+          else if (op === "/") left = left / right;
+          else left = left % right;
+        }
+        return left;
+      }
+      function unary() {
+        if (peek() && (peek().t === "+" || peek().t === "-")) {
+          const op = next().t;
+          const v = unary();
+          return op === "-" ? -v : v;
+        }
+        return power();
+      }
+      function power() {
+        const base = atom();
+        if (peek() && peek().t === "^") {
+          next();
+          const exp = unary(); // right-associative
+          return Math.pow(base, exp);
+        }
+        return base;
+      }
+      function atom() {
+        const tok = peek();
+        if (!tok) throw new Error("表达式不完整");
+        if (tok.t === "num") { next(); return tok.v; }
+        if (tok.t === "(") {
+          next();
+          const v = addSub();
+          expect(")");
+          return v;
+        }
+        if (tok.t === "name") {
+          next();
+          const name = tok.v.toLowerCase();
+          if (peek() && peek().t === "(") {
+            next();
+            const arg = addSub();
+            expect(")");
+            const fn = FUNCS[name];
+            if (!fn) throw new Error(`未知函数 “${tok.v}”`);
+            return fn(arg);
+          }
+          if (name in CONSTS) return CONSTS[name];
+          throw new Error(`未知标识符 “${tok.v}”`);
+        }
+        throw new Error(`意外的符号 “${tok.t}”`);
+      }
+
+      const result = addSub();
+      if (pos < tokens.length) throw new Error(`多余的符号 “${tokens[pos].t || tokens[pos].v}”`);
+      return result;
+    }
+
+    function evaluate(src) {
+      const tokens = tokenize(src);
+      if (tokens.length === 0) return null;
+      const v = parse(tokens);
+      if (typeof v !== "number" || Number.isNaN(v)) throw new Error("结果无效（NaN）");
+      if (!Number.isFinite(v)) throw new Error("结果为无穷大（可能除以了 0）");
+      return v;
+    }
+
+    // Format a number without noisy floating-point tails.
+    function fmt(n) {
+      if (Number.isInteger(n)) return String(n);
+      const rounded = Number(n.toPrecision(12));
+      return String(rounded);
+    }
+
+    // ---- UI wiring -------------------------------------------------------
+    const exprEl = document.getElementById("expr");
+    const valueEl = document.getElementById("value");
+    const copyBtn = document.getElementById("copy-btn");
+    const historyList = document.getElementById("history-list");
+
+    let lastValue = null;
+
+    function update() {
+      const src = exprEl.value;
+      if (!src.trim()) {
+        exprEl.classList.remove("error");
+        valueEl.className = "value empty";
+        valueEl.textContent = "结果将显示在这里";
+        copyBtn.hidden = true;
+        lastValue = null;
+        return;
+      }
+      try {
+        const v = evaluate(src);
+        lastValue = v;
+        exprEl.classList.remove("error");
+        valueEl.className = "value";
+        valueEl.textContent = "= " + fmt(v);
+        copyBtn.hidden = false;
+      } catch (err) {
+        lastValue = null;
+        exprEl.classList.add("error");
+        valueEl.className = "value error";
+        valueEl.textContent = err.message;
+        copyBtn.hidden = true;
+      }
+    }
+
+    exprEl.addEventListener("input", update);
+
+    exprEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && lastValue !== null) {
+        e.preventDefault();
+        addHistory(exprEl.value.trim(), fmt(lastValue));
+      }
+    });
+
+    // Keypad: insert at caret.
+    document.getElementById("keypad").addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      if (btn.id === "backspace") {
+        const start = exprEl.selectionStart, end = exprEl.selectionEnd;
+        if (start === end && start > 0) {
+          exprEl.value = exprEl.value.slice(0, start - 1) + exprEl.value.slice(end);
+          exprEl.setSelectionRange(start - 1, start - 1);
+        } else {
+          exprEl.value = exprEl.value.slice(0, start) + exprEl.value.slice(end);
+          exprEl.setSelectionRange(start, start);
+        }
+        exprEl.focus();
+        update();
+        return;
+      }
+      const ins = btn.dataset.ins;
+      if (ins == null) return;
+      const start = exprEl.selectionStart, end = exprEl.selectionEnd;
+      exprEl.value = exprEl.value.slice(0, start) + ins + exprEl.value.slice(end);
+      const caret = start + ins.length;
+      exprEl.setSelectionRange(caret, caret);
+      exprEl.focus();
+      update();
+    });
+
+    copyBtn.addEventListener("click", () => {
+      if (lastValue === null) return;
+      navigator.clipboard.writeText(fmt(lastValue)).then(() => {
+        const original = copyBtn.textContent;
+        copyBtn.textContent = "已复制!";
+        setTimeout(() => (copyBtn.textContent = original), 1200);
+      });
+    });
+
+    document.getElementById("clear-btn").addEventListener("click", () => {
+      exprEl.value = "";
+      update();
+      exprEl.focus();
+    });
+
+    // ---- History ---------------------------------------------------------
+    const history = [];
+
+    function addHistory(expr, val) {
+      if (!expr) return;
+      history.unshift({ expr, val });
+      if (history.length > 50) history.pop();
+      renderHistory();
+    }
+
+    function renderHistory() {
+      if (history.length === 0) {
+        historyList.innerHTML = '<div class="history-empty">还没有计算记录，按回车保存一条。</div>';
+        return;
+      }
+      historyList.innerHTML = "";
+      for (const h of history) {
+        const item = document.createElement("div");
+        item.className = "history-item";
+        const expr = document.createElement("span");
+        expr.className = "h-expr";
+        expr.textContent = h.expr;
+        const val = document.createElement("span");
+        val.className = "h-val";
+        val.textContent = "= " + h.val;
+        item.append(expr, val);
+        item.addEventListener("click", () => {
+          exprEl.value = h.expr;
+          exprEl.focus();
+          update();
+        });
+        historyList.appendChild(item);
+      }
+    }
+
+    document.getElementById("clear-hist").addEventListener("click", () => {
+      history.length = 0;
+      renderHistory();
+    });
+
+    exprEl.focus();
+  </script>
+</body>
+</html>
